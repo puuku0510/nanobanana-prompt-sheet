@@ -2,6 +2,7 @@
  * NanoBanana プロンプトシート生成ツール
  * 
  * ストーリーボードCSVからNanoBanana用プロンプトをテキスト形式で抽出する。
+ * SUYA撮影・SUYA準備・画面収録のカットは自動スキップ。
  * 
  * 使い方:
  *   node gen_nanobanana_sheet.js <入力CSV> [出力ファイル]
@@ -44,6 +45,17 @@ function parseCSV(text) {
     return rows;
 }
 
+// ─── スキップ判定 ───
+function shouldSkip(text) {
+    if (!text) return true;
+    const t = text.trim();
+    if (!t) return true;
+    // SUYA撮影、SUYA準備、画面収録、実際の画面収録を使用 → スキップ
+    if (/SUYA/i.test(t)) return true;
+    if (/実際の画面収録を使用/.test(t)) return true;
+    return false;
+}
+
 // ─── 引数チェック ───
 const args = process.argv.slice(2);
 if (args.length < 1) {
@@ -63,14 +75,7 @@ if (!fs.existsSync(inputFile)) {
 const raw = fs.readFileSync(inputFile, 'utf-8');
 const rows = parseCSV(raw);
 
-const sep = '────────────────────────────────────────────────────────────';
-const title = outputFile.replace(/_NanoBananaプロンプト\.txt$/, '').replace(/^.*[\\\/]/, '');
-
-let out = `# NanoBanana プロンプトシート\n`;
-out += `# 「${title}」ストーリーボード\n`;
-out += `# 使い方: 各ブロックのプロンプト部分をそのままNanoBananaに貼り付けてください\n`;
-out += `================================================================================\n\n`;
-
+let out = '';
 let count = 0;
 
 for (let r = 1; r < rows.length; r++) {
@@ -83,21 +88,20 @@ for (let r = 1; r < rows.length; r++) {
     const nb1 = row[7].trim();  // H: NanoBanana パターン1
     const nb2 = row[8].trim();  // I: NanoBanana パターン2
 
-    // 両パターンとも空 or 画面収録のみのカットはスキップ
-    if ((!nb1 || nb1 === '（実際の画面収録を使用）') &&
-        (!nb2 || nb2 === '（実際の画面収録を使用）')) continue;
+    // 両方ともスキップ対象なら飛ばす
+    if (shouldSkip(nb1) && shouldSkip(nb2)) continue;
 
     count++;
-    out += `${sep}\n【カット${cutNo}】${section}\n${sep}\n\n`;
-    out += `▼ 台本（参考）\n${narr.replace(/\*\*/g, '')}\n\n`;
+    out += `【カット${cutNo}】${section}\n`;
+    out += `${narr.replace(/\*\*/g, '')}\n\n`;
 
-    if (nb1 && nb1 !== '（実際の画面収録を使用）') {
-        out += `▼ プロンプト パターン1（↓これをコピペ）\n${nb1}\n\n`;
+    if (!shouldSkip(nb1)) {
+        out += `${nb1}\n\n`;
     }
-    if (nb2 && nb2 !== '（実際の画面収録を使用）') {
-        out += `▼ プロンプト パターン2（↓これをコピペ）\n${nb2}\n\n`;
+    if (!shouldSkip(nb2)) {
+        out += `${nb2}\n\n`;
     }
-    out += `\n`;
+    out += `---\n\n`;
 }
 
 fs.writeFileSync(outputFile, out, 'utf-8');

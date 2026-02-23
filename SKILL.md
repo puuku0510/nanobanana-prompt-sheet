@@ -29,8 +29,51 @@ https://docs.google.com/spreadsheets/d/XXXXX/edit?gid=YYYYYY#gid=YYYYYY
 
 ```
 このCSVからプロンプトシート作って
-C:\KEI IWASAKI\XXX_ストーリーボード.csv
+C:\path\to\storyboard.csv
 ```
+
+---
+
+## ⚠️ 事前確認（重要）
+
+スキル実行前に、以下の情報がユーザーから提供されているか確認する:
+
+1. **シート名**（Google Sheets の場合）
+   - URLに `gid=` が含まれていればシートを特定できるが、含まれていない場合は**必ずユーザーに聞く**
+   - 「どのシートを使いますか？」と聞く
+   - 例：「YouTubeを始める前にやっておくこと」
+
+2. **出力ファイル名のベース**
+   - シート名からデフォルトで命名する（例：`YouTubeを始める前に_NanoBananaプロンプト.txt`）
+
+> [!IMPORTANT]
+> ユーザーがシート名を伝え忘れていたら、**スクリプト実行前に必ず聞くこと**。間違ったシートから抽出すると全部やり直しになる。
+
+---
+
+## 処理手順（高速版）
+
+### Google Sheets URLの場合
+
+1. URLから `spreadsheet_id` と `gid` を抽出
+   - `gid` が無い場合 → ユーザーにシート名を聞いて `gid` を特定する
+2. CSV形式でダウンロード:
+   ```powershell
+   Invoke-WebRequest -Uri 'https://docs.google.com/spreadsheets/d/{id}/export?format=csv&gid={gid}' -OutFile 'raw_storyboard.csv'
+   ```
+3. 同梱スクリプトで一発変換:
+   ```
+   // turbo
+   node "{このスキルのディレクトリ}/scripts/gen_nanobanana_sheet.js" "raw_storyboard.csv" "{出力ファイル名}.txt"
+   ```
+
+### ローカルCSVの場合
+
+1. 同梱スクリプトで一発変換:
+   ```
+   // turbo
+   node "{このスキルのディレクトリ}/scripts/gen_nanobanana_sheet.js" "{CSVパス}" "{出力ファイル名}.txt"
+   ```
 
 ---
 
@@ -56,15 +99,6 @@ C:\KEI IWASAKI\XXX_ストーリーボード.csv
 
 ```
 
-### ファイルヘッダー
-
-```
-# NanoBanana プロンプトシート
-# 「{タイトル}」ストーリーボード
-# 使い方: 各ブロックのプロンプト部分をそのままNanoBananaに貼り付けてください
-================================================================================
-```
-
 ---
 
 ## 列のマッピング
@@ -83,115 +117,21 @@ C:\KEI IWASAKI\XXX_ストーリーボード.csv
 
 ---
 
-## 処理手順
-
-### Google Sheets URLの場合
-
-1. URLから `spreadsheet_id` と `gid` を抽出
-2. CSV形式でダウンロード:
-   ```
-   https://docs.google.com/spreadsheets/d/{id}/export?format=csv&gid={gid}
-   ```
-   PowerShellの `Invoke-WebRequest` を使用:
-   ```powershell
-   Invoke-WebRequest -Uri '{url}' -OutFile 'raw_storyboard.csv'
-   ```
-3. Node.jsスクリプトでCSVをパース → テキスト出力
-
-### ローカルCSVの場合
-
-1. 指定されたCSVを直接Node.jsスクリプトで読み込み
-2. テキスト出力
-
----
-
-## Node.js スクリプトテンプレート
-
-```javascript
-const fs = require('fs');
-
-// CSVパーサー（クォート内カンマ・改行対応）
-function parseCSV(text) {
-  const rows = [];
-  let i = 0;
-  while (i < text.length) {
-    const row = [];
-    while (i < text.length) {
-      let val = '';
-      if (text[i] === '"') {
-        i++;
-        while (i < text.length) {
-          if (text[i] === '"' && text[i+1] === '"') { val += '"'; i += 2; }
-          else if (text[i] === '"') { i++; break; }
-          else { val += text[i]; i++; }
-        }
-      } else {
-        while (i < text.length && text[i] !== ',' && text[i] !== '\r' && text[i] !== '\n') {
-          val += text[i]; i++;
-        }
-      }
-      row.push(val);
-      if (i < text.length && text[i] === ',') { i++; }
-      else break;
-    }
-    if (text[i] === '\r') i++;
-    if (text[i] === '\n') i++;
-    if (row.length > 1 || row[0] !== '') rows.push(row);
-  }
-  return rows;
-}
-
-const raw = fs.readFileSync('{入力CSV}', 'utf-8');
-const rows = parseCSV(raw);
-
-const sep = '────────────────────────────────────────────────────────────';
-let out = `# NanoBanana プロンプトシート\n`;
-out += `# 「{タイトル}」ストーリーボード\n`;
-out += `# 使い方: 各ブロックのプロンプト部分をそのままNanoBananaに貼り付けてください\n`;
-out += `================================================================================\n\n`;
-
-let count = 0;
-
-for (let r = 1; r < rows.length; r++) {
-  const row = rows[r];
-  if (row.length < 9) continue;
-
-  const cutNo   = row[0].trim();  // A: カット番号
-  const section = row[1].trim();  // B: セクション
-  const narr    = row[3].trim();  // D: ナレーション
-  const nb1     = row[7].trim();  // H: NanoBanana パターン1
-  const nb2     = row[8].trim();  // I: NanoBanana パターン2
-
-  // 両パターンとも空 or 画面収録のみのカットはスキップ
-  if ((!nb1 || nb1 === '（実際の画面収録を使用）') &&
-      (!nb2 || nb2 === '（実際の画面収録を使用）')) continue;
-
-  count++;
-  out += `${sep}\n【カット${cutNo}】${section}\n${sep}\n\n`;
-  out += `▼ 台本（参考）\n${narr.replace(/\*\*/g, '')}\n\n`;
-
-  if (nb1 && nb1 !== '（実際の画面収録を使用）') {
-    out += `▼ プロンプト パターン1（↓これをコピペ）\n${nb1}\n\n`;
-  }
-  if (nb2 && nb2 !== '（実際の画面収録を使用）') {
-    out += `▼ プロンプト パターン2（↓これをコピペ）\n${nb2}\n\n`;
-  }
-  out += `\n`;
-}
-
-fs.writeFileSync('{出力パス}', out, 'utf-8');
-console.log(`Done! ${count} cuts written`);
-```
-
----
-
 ## 出力ファイル名の規則
 
 ```
-{元のスプシ名 or CSV名}_NanoBananaプロンプト.txt
+{シート名 or CSV名}_NanoBananaプロンプト.txt
 ```
 
 出力先は元のCSVと同じディレクトリ、またはユーザー指定のディレクトリ。
+
+---
+
+## リソースファイル
+
+| ファイル | 内容 |
+|----------|------|
+| `scripts/gen_nanobanana_sheet.js` | CSVパース＋テキスト変換スクリプト |
 
 ---
 

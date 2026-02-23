@@ -3,6 +3,7 @@
  * 
  * ストーリーボードCSVからNanoBanana用プロンプトをテキスト形式で抽出する。
  * SUYA撮影・SUYA準備・画面収録のカットは自動スキップ。
+ * 最終チェック：D列(ナレーション)・H列(パターン1)・I列(パターン2)の抜け漏れを検出。
  * 
  * 使い方:
  *   node gen_nanobanana_sheet.js <入力CSV> [出力ファイル]
@@ -45,12 +46,11 @@ function parseCSV(text) {
     return rows;
 }
 
-// ─── スキップ判定 ───
-function shouldSkip(text) {
+// ─── スキップ判定（SUYA撮影/画面収録系） ───
+function isSkipPrompt(text) {
     if (!text) return true;
     const t = text.trim();
     if (!t) return true;
-    // SUYA撮影、SUYA準備、画面収録、実際の画面収録を使用 → スキップ
     if (/SUYA/i.test(t)) return true;
     if (/実際の画面収録を使用/.test(t)) return true;
     return false;
@@ -78,31 +78,61 @@ const rows = parseCSV(raw);
 let out = '';
 let count = 0;
 
+// ─── 最終チェック用カウンター ───
+const totalDataRows = rows.length - 1; // ヘッダー除く
+const warnings = [];
+let skippedSUYA = 0;
+let emptyD = 0;
+let emptyH = 0;
+let emptyI = 0;
+
 for (let r = 1; r < rows.length; r++) {
     const row = rows[r];
-    if (row.length < 9) continue;
+    if (row.length < 2) continue;
 
-    const cutNo = row[0].trim();  // A: カット番号
-    const section = row[1].trim();  // B: セクション
-    const narr = row[3].trim();  // D: ナレーション
-    const nb1 = row[7].trim();  // H: NanoBanana パターン1
-    const nb2 = row[8].trim();  // I: NanoBanana パターン2
+    const cutNo = (row[0] || '').trim();
+    const section = (row[1] || '').trim();
+    const narr = (row[3] || '').trim();
+    const nb1 = (row[7] || '').trim();
+    const nb2 = (row[8] || '').trim();
+
+    // カット番号が空なら非データ行として無視
+    if (!cutNo) continue;
+
+    // ─── 抜け漏れチェック ───
+    if (!narr) { emptyD++; warnings.push(`⚠ カット${cutNo}: D列（ナレーション）が空`); }
+    if (!nb1) { emptyH++; warnings.push(`⚠ カット${cutNo}: H列（パターン1）が空`); }
+    if (!nb2) { emptyI++; warnings.push(`⚠ カット${cutNo}: I列（パターン2）が空`); }
 
     // 両方ともスキップ対象なら飛ばす
-    if (shouldSkip(nb1) && shouldSkip(nb2)) continue;
+    if (isSkipPrompt(nb1) && isSkipPrompt(nb2)) {
+        skippedSUYA++;
+        continue;
+    }
 
     count++;
     out += `【カット${cutNo}】${section}\n`;
     out += `${narr.replace(/\*\*/g, '')}\n\n`;
 
-    if (!shouldSkip(nb1)) {
-        out += `${nb1}\n\n`;
+    if (!isSkipPrompt(nb1)) {
+        out += `▼ パターン1\n${nb1}\n\n`;
     }
-    if (!shouldSkip(nb2)) {
-        out += `${nb2}\n\n`;
+    if (!isSkipPrompt(nb2)) {
+        out += `▼ パターン2\n${nb2}\n\n`;
     }
     out += `---\n\n`;
 }
 
 fs.writeFileSync(outputFile, out, 'utf-8');
+
+// ─── 最終レポート ───
 console.log(`✅ 完了！ ${count} カット → ${outputFile}`);
+console.log(`   📊 全${totalDataRows}行 → プロンプトあり: ${count} / SUYA等スキップ: ${skippedSUYA}`);
+
+if (warnings.length > 0) {
+    console.log(`\n⚠ 抜け漏れ検出 (${warnings.length}件):`);
+    warnings.forEach(w => console.log(`   ${w}`));
+    console.log(`\n   D列空: ${emptyD} / H列空: ${emptyH} / I列空: ${emptyI}`);
+} else {
+    console.log(`   ✅ D列・H列・I列の抜け漏れなし`);
+}
